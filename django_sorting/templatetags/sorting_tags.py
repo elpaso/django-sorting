@@ -6,8 +6,7 @@ register = template.Library()
 
 DEFAULT_SORT_UP = getattr(settings, 'DEFAULT_SORT_UP' , '&uarr;')
 DEFAULT_SORT_DOWN = getattr(settings, 'DEFAULT_SORT_DOWN' , '&darr;')
-INVALID_FIELD_RAISES_404 = getattr(settings, 
-        'SORTING_INVALID_FIELD_RAISES_404' , False)
+
 
 sort_directions = {
     'asc': {'icon':DEFAULT_SORT_UP, 'inverse': 'desc'}, 
@@ -15,13 +14,14 @@ sort_directions = {
     '': {'icon':DEFAULT_SORT_DOWN, 'inverse': 'asc'}, 
 }
 
+
 def anchor(parser, token):
     """
     Parses a tag that's supposed to be in this format: {% anchor field title %}    
     """
     bits = [b.strip('"\'') for b in token.split_contents()]
     if len(bits) < 2:
-        raise TemplateSyntaxError, "anchor tag takes at least 1 argument"
+        raise template.TemplateSyntaxError, "anchor tag takes at least 1 argument"
     try:
         title = bits[2]
     except IndexError:
@@ -56,6 +56,8 @@ class SortAnchorNode(template.Node):
         if 'dir' in getvars:
             sortdir = getvars['dir']
             del getvars['dir']
+            if sortdir not in sort_directions:
+                sortdir = ''
         else:
             sortdir = ''
         if sortby == self.field:
@@ -72,6 +74,9 @@ class SortAnchorNode(template.Node):
         else:
             title = self.title
 
+        valid_fields = getattr(request, 'valid_fields', [])
+        valid_fields.append(self.field)
+        setattr(request, 'valid_fields', valid_fields)
         url = '%s?sort=%s%s' % (request.path, self.field, urlappend)
         return '<a href="%s" title="%s">%s</a>' % (url, self.title, title)
 
@@ -79,8 +84,9 @@ class SortAnchorNode(template.Node):
 def autosort(parser, token):
     bits = [b.strip('"\'') for b in token.split_contents()]
     if len(bits) != 2:
-        raise TemplateSyntaxError, "autosort tag takes exactly one argument"
+        raise template.TemplateSyntaxError, "autosort tag takes exactly one argument"
     return SortedDataNode(bits[1])
+
 
 class SortedDataNode(template.Node):
     """
@@ -93,19 +99,17 @@ class SortedDataNode(template.Node):
     def render(self, context):
         key = self.queryset_var.var
         value = self.queryset_var.resolve(context)
-        order_by = context['request'].field
-        if len(order_by) > 1:
-            try:
-                context[key] = value.order_by(order_by)
-            except template.TemplateSyntaxError:
-                if INVALID_FIELD_RAISES_404:
-                    raise Http404('Invalid field sorting. If DEBUG were set to ' +
-                    'False, an HTTP 404 page would have been shown instead.')
-                context[key] = value
+        request = context['request']
+        order_by = request.field
+        valid_fields = getattr(request, 'valid_fields', [])
+        # Valid fields are now defined by using the sort anchors
+        # This means they must come before the auto-sort node  
+        if len(order_by) > 1 and order_by.lstrip('-') in valid_fields:
+            context[key] = value.order_by(order_by)
         else:
             context[key] = value
-
         return ''
+
 
 anchor = register.tag(anchor)
 autosort = register.tag(autosort)
